@@ -1,0 +1,849 @@
+---
+title: "Projekt"
+author: "Jaan Otter"
+date: "2025-05-03"
+output: html_document
+runtime: shiny
+---
+```{r}
+library(knitr)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Andmete ettevalmistamine
+
+Laeme andmestiku alla.
+
+```{r, warning = FALSE, message = FALSE}
+
+library(tidyverse) 
+nba_data <- read_csv(
+  "nba_andmestik/database_24_25.csv",
+  locale = locale(encoding = "ISO-8859-1")
+)
+```
+
+Kuupäev peab olema õiges vormingus.
+
+```{r}
+nba_data$Data <- as.Date(nba_data$Data)
+```
+
+## Uute tunnuste lisamine
+
+Lisame uued tunnused, mis kirjeldavad tiimi kogustatistikat igas mängus.
+
+```{r}
+team_totals <- nba_data %>%
+  group_by(Tm, Data) %>%
+  summarise(
+    Team_FG = sum(FG, na.rm = TRUE),
+    Team_FGA = sum(FGA, na.rm = TRUE),
+    Team_3P = sum(`3P`, na.rm = TRUE),
+    Team_3PA = sum(`3PA`, na.rm = TRUE),
+    Team_FT = sum(FT, na.rm = TRUE),
+    Team_FTA = sum(FTA, na.rm = TRUE),
+    Team_ORB = sum(ORB, na.rm = TRUE),
+    Team_DRB = sum(DRB, na.rm = TRUE),
+    Team_REB = sum(TRB, na.rm = TRUE),
+    Team_AST = sum(AST, na.rm = TRUE),
+    Team_STL = sum(STL, na.rm = TRUE),
+    Team_BLK = sum(BLK, na.rm = TRUE),
+    Team_TOV = sum(TOV, na.rm = TRUE),
+    Team_PF = sum(PF, na.rm = TRUE),
+    Team_PTS = sum(PTS, na.rm = TRUE),
+    Team_GmSc = sum(GmSc, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Team_FG_percent = Team_FG / Team_FGA,
+    Team_3P_percent = Team_3P / Team_3PA,
+    Team_FT_percent = Team_FT / Team_FTA
+  )
+
+
+nba_data <- nba_data %>%
+  left_join(team_totals, by = c("Tm", "Data"))
+```
+
+Lisame uue tunnuse MatchID, mis teeb kindlaks, mis mänguga on tegemist.
+
+```{r}
+library(dplyr)
+
+
+nba_data <- nba_data %>%
+  mutate(Match_Teams = pmin(Tm, Opp),  
+         Match_Opponents = pmax(Tm, Opp))  
+
+
+nba_data <- nba_data %>%
+  arrange(Data) %>%  
+  group_by(Data, Match_Teams, Match_Opponents) %>%  
+  mutate(MatchID = cur_group_id()) %>%  
+  ungroup() %>%
+  select(-Match_Teams, -Match_Opponents) 
+```
+
+# Andmeanalüüs
+
+Kõigepealt teeme 3 tabelit. Neist 1. kirjeldab põhiteavet andmestiku kohta (näiteks mitu erinevat tiimi/mängijat/mängu oli ning mis ajaperioodist meil on andmed). Neist 2. kirjeldab mõndade näitajate individuaalset statistikat ning neist 3. kirjeldab mõndade näitajate meeskondlikku statistikat.
+
+
+```{r}
+library(dplyr)
+library(knitr)
+
+
+summary_stats <- nba_data %>%
+  summarise(
+    Mängijate_arv = n_distinct(Player), 
+    Tiimide_arv = n_distinct(Tm),  
+    Mängude_arv = max(MatchID, na.rm = TRUE), 
+    Väikseim_kuupäev = min(Data, na.rm = TRUE),  
+    Suurim_kuupäev = max(Data, na.rm = TRUE)  
+  )
+
+stats_by_indicator <- nba_data %>%
+  gather(key = "Näitaja", value = "Väärtus", PTS, TRB, AST, STL, BLK, TOV) %>%
+  group_by(Näitaja) %>%
+  summarise(
+    Miinimum = min(Väärtus, na.rm = TRUE),
+    Q1 = quantile(Väärtus, 0.25, na.rm = TRUE),
+    Mediaan = median(Väärtus, na.rm = TRUE),
+    Q3 = quantile(Väärtus, 0.75, na.rm = TRUE),
+    Maksimum = max(Väärtus, na.rm = TRUE)
+  ) %>%
+  mutate(Näitaja = recode(Näitaja,
+                          "PTS" = "Punktid",
+                          "TRB" = "Lauapallid",
+                          "AST" = "Söödud",
+                          "STL" = "Vaheltlõiked",
+                          "BLK" = "Blokeeringud",
+                          "TOV" = "Pallikaotused"))
+
+team_stats_by_indicator <- team_totals %>%
+  gather(key = "Näitaja", value = "Väärtus", Team_PTS, Team_REB, Team_AST, Team_STL, Team_BLK, Team_TOV) %>%
+  group_by(Näitaja) %>%
+  summarise(
+    Miinimum = min(Väärtus, na.rm = TRUE),
+    Q1 = quantile(Väärtus, 0.25, na.rm = TRUE),
+    Mediaan = median(Väärtus, na.rm = TRUE),
+    Q3 = quantile(Väärtus, 0.75, na.rm = TRUE),
+    Maksimum = max(Väärtus, na.rm = TRUE)
+  ) %>%
+  mutate(Näitaja = recode(Näitaja,
+                          "Team_PTS" = "Punktid",
+                          "Team_REB" = "Lauapallid",
+                          "Team_AST" = "Söödud",
+                          "Team_STL" = "Vaheltlõiked",
+                          "Team_BLK" = "Blokeeringud",
+                          "Team_TOV" = "Pallikaotused"))
+
+
+
+
+kable(summary_stats, caption = "Põhiteave")
+kable(stats_by_indicator, caption = "Erinevate näitajate individuaalne statistika")
+kable(team_stats_by_indicator, caption = "Erinevate näitajate meeskondlik statistika")
+```
+
+Andmestikus on andmed 30 erineva tiimi, 561 erineva mängija, 767 erineva mängu kohta. Andmed on ajaperioodist 22.10.2024 - 07.02.2025. Kuna NBA põhiturniir lõppes 2025. aasta aprillis, siis pole andmeid kogu põhiturniiri kohta.
+
+Individuaalselt on söötude väärtused mängu kohta (0-22, mediaan 2), blokeeringute väärtused (0-10, mediaan 0), punktide väärtused (0-60, mediaan 9), vaheltlõigete väärtused (0-8, mediaan 0), pallikaotuste väärtused (0-11, mediaan 1), (kogu)lauapallide väärtused (0-28, mediaan 3).
+
+Meeskondlikult on söötude väärtused mängu kohta (9-45, mediaan 26), blokeeringute väärtused (0-15, mediaan 5), punktide väärtused (67-155, mediaan 113), vaheltlõigete väärtused (1-22, mediaan 8), pallikaotuste väärtused (3-31, mediaan 13), (kogu)lauapallide väärtused (23-70, mediaan 44).
+
+```{r}
+summary(nba_data)
+```
+
+Täpsemad väärtused on leitavad üleval asuvast väljatrükist.
+
+
+Kontrollime ka, kas puuduvaid väärtusi esineb.
+
+```{r}
+colSums(is.na(nba_data))
+
+```
+
+Andmestikus pole puuduvaid väärtusi, mis teeb edasise analüüsi lihtsamaks.
+
+```{r}
+unique(nba_data$Player)
+unique(nba_data$Tm)
+unique(nba_data$Data)
+```
+
+Erinevad väärtused mängijate nimede, tiimi lühendite ning kuupäevade osas tunduvad ka loogilised olema.
+
+
+Nüüd, kus oleme veendunud andmestiku heas kvaliteedis,teeme andmestikud, mis kirjeldavad mängijate ning tiimide keskmisi väärtusi (erinevate näitajate lõikes mängus) kogu andmeperioodi kohta.
+
+
+```{r}
+player_stats <- nba_data %>%
+  group_by(Player) %>%
+  summarise(
+    Games = n_distinct(Data),  
+    PTS = sum(PTS, na.rm = TRUE) / Games,  
+    AST = sum(AST, na.rm = TRUE) / Games,  
+    REB = sum(TRB, na.rm = TRUE) / Games,  
+    STL = sum(STL, na.rm = TRUE) / Games, 
+    BLK = sum(BLK, na.rm = TRUE) / Games,  
+    FG_percent = sum(FG, na.rm = TRUE) / sum(FGA, na.rm = TRUE),  
+    ThreeP_percent = sum(`3P`, na.rm = TRUE) / sum(`3PA`, na.rm = TRUE),  
+    FT_percent = sum(FT, na.rm = TRUE) / sum(FTA, na.rm = TRUE),  
+    FG = sum(FG, na.rm = TRUE) / Games,  
+    FGA = sum(FGA, na.rm = TRUE) / Games,  
+    ThreeP = sum(`3P`, na.rm = TRUE) / Games,  
+    ThreePA = sum(`3PA`, na.rm = TRUE) / Games,  
+    FT = sum(FT, na.rm = TRUE) / Games,  
+    FTA = sum(FTA, na.rm = TRUE) / Games,  
+    ORB = sum(ORB, na.rm = TRUE) / Games,  
+    DRB = sum(DRB, na.rm = TRUE) / Games,  
+    TOV = sum(TOV, na.rm = TRUE) / Games, 
+    GmSc = sum(GmSc, na.rm = TRUE) / Games,  
+    PF = sum(PF, na.rm = TRUE) / Games  
+  ) %>% 
+  ungroup()
+
+team_stats <- nba_data %>%
+  group_by(Tm) %>%
+  summarise(
+    Games = n_distinct(Data),  
+    PTS = sum(PTS, na.rm = TRUE) / Games,  
+    AST = sum(AST, na.rm = TRUE) / Games,  
+    REB = sum(TRB, na.rm = TRUE) / Games,  
+    STL = sum(STL, na.rm = TRUE) / Games,  
+    BLK = sum(BLK, na.rm = TRUE) / Games,  
+    FG_percent = sum(FG, na.rm = TRUE) / sum(FGA, na.rm = TRUE),  
+    ThreeP_percent = sum(`3P`, na.rm = TRUE) / sum(`3PA`, na.rm = TRUE),  
+    FT_percent = sum(FT, na.rm = TRUE) / sum(FTA, na.rm = TRUE),  
+    FG = sum(FG, na.rm = TRUE) / Games,  
+    FGA = sum(FGA, na.rm = TRUE) / Games,  
+    ThreeP = sum(`3P`, na.rm = TRUE) / Games,  
+    ThreePA = sum(`3PA`, na.rm = TRUE) / Games,  
+    FT = sum(FT, na.rm = TRUE) / Games,  
+    FTA = sum(FTA, na.rm = TRUE) / Games,  
+    ORB = sum(ORB, na.rm = TRUE) / Games,  
+    DRB = sum(DRB, na.rm = TRUE) / Games, 
+    TOV = sum(TOV, na.rm = TRUE) / Games, 
+    GmSc = sum(GmSc, na.rm = TRUE) / Games, 
+    PF = sum(PF, na.rm = TRUE) / Games  
+  ) %>% 
+  ungroup()
+```
+
+
+## Erinevate asjade uurimine
+
+Nende andmestike pealt saab erinevaid asju uurida.
+
+
+
+
+```{r}
+library(ggplot2)
+
+ggplot(player_stats, aes(y = PTS)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "Mängijate keskmiste punktide jaotus", x = NULL, y = "Punktid mängu kohta") +
+  theme(axis.text.x = element_blank(),  
+        axis.ticks.x = element_blank()) 
+```
+
+Üleval asuvalt karpdiagrammilt võib näha, et suurem osa mängijaid skoorib keskmiselt umbes 3-13 punkti. Ehk siis praktiliselt saab väita, et suurem osa mängijaid on rollimängijad NBA tiimides.
+
+
+```{r, warning = FALSE}
+
+library(ggplot2)
+
+ggplot(player_stats, aes(y = FT_percent)) +
+  geom_boxplot(fill = "lightgreen") +
+  labs(title = "Mängijate vabavisete tabavus (osakaal)", y = "Visketabavus (osakaal)") +
+    theme(axis.text.x = element_blank(),  
+        axis.ticks.x = element_blank()) 
+```
+
+Enamus mängijaid oskab NBA-s vabaviskeid visata. Pooled mängijad viskavad umbes 65% - 85% täpsusega.
+
+
+
+```{r}
+library(ggplot2)
+
+ggplot(player_stats, aes(x = GmSc)) +
+  geom_histogram(binwidth = 2, fill = "tomato", color = "white") +
+  labs(title = "Mängijate keskmise mänguskoori jaotus", x = "Mängijaskoor (GmSc)", y = "Arv")
+```
+
+Mängijate keskmine mänguskoor näitab, kui kasulikud mängijad tiimi jaoks olid keskmiselt ühes mängus. Enamus mängijaid polnud väga kasulikud tiimi jaoks, aga olid mõned mängijad, kes olid oma tiimi jaoks väga kasulikud.
+
+
+
+
+```{r, warning = FALSE}
+
+library(ggplot2)
+
+ggplot(player_stats, aes(x = FG_percent, y = PTS)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Seos visketabavuse ja punktide vahel", x = "Visketabavuse osakaal", y = "Visatud punktid")
+```
+
+Enamasti viskavad mängijad väljakult veidi alla pooltest visetest sisse. Sarnast trendi on näha nii nende mängijate puhul, kes skoorivad vähe, kui ka nende mängijate puhul, kes skoorivad palju. Samas, väheskoorivate mängijate visketabavus on üldiselt veidi madalam kui paljuskoorivate mängijate visketabavus. See tähendab, et üldiselt saavad ikkagi parema viskekäega mängijad rohkem võimalusi skoorida enda tiimi eest.
+
+
+```{r}
+top_players <- player_stats %>%
+  arrange(desc(PTS)) %>%
+  slice(1:10)
+
+ggplot(top_players, aes(x = reorder(Player, PTS), y = PTS)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  labs(title = "Top 10 mängijat keskmiste punktide järgi mängu kohta", x = "Mängija", y = "Keskmised punktid mängu kohta")
+```
+
+Kõige rohkem on keskmiselt ühes mängus punkte visanud NBA MVP hääletuses top 3 asuvad mängijad - Shai Gilgeous-Alexander, Giannis Antetokounmpo ning Nikola Jokić. Projekti tegemise ajal pole MVP hääletuste tulemusi veel avalikustatud, kuid on teada, et Shai, Giannis ning Nikola on esikolmikus.
+
+
+```{r}
+ggplot(team_stats, aes(x = reorder(Tm, PTS), y = PTS)) +
+  geom_col(fill = "purple") +
+  coord_flip() +
+  labs(title = "Meeskondade keskmine punktiskoor mängu kohta", x = "Meeskond", y = "Punktid mängu kohta")
+```
+
+Kõige rohkem on keskmiselt mängus punkte visanud Memphis Grizzlies. Kõige vähem aga Orlando Magic.
+
+
+
+```{r}
+
+library(kableExtra)
+
+get_top3_players <- function(stat_column) {
+  nba_data %>%
+    filter(!is.na(.data[[stat_column]])) %>%
+    group_by(Player) %>%
+    summarise(MaxValue = max(.data[[stat_column]], na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(MaxValue)) %>%
+    slice_head(n = 3)
+}
+
+
+
+
+individual_top3 <- bind_rows(
+  get_top3_players("PTS")  %>% mutate(Näitaja = "Punktid"),
+  get_top3_players("TRB")  %>% mutate(Näitaja = "Lauapallid"),
+  get_top3_players("AST")  %>% mutate(Näitaja = "Söödud"),
+  get_top3_players("STL")  %>% mutate(Näitaja = "Vaheltlõiked"),
+  get_top3_players("BLK")  %>% mutate(Näitaja = "Blokeeringud"),
+  get_top3_players("TOV")  %>% mutate(Näitaja = "Pallikaotused"),
+  get_top3_players("GmSc") %>% mutate(Näitaja = "Game Score")
+) %>%
+  group_by(Näitaja) %>%
+  mutate(
+    Koht = row_number(),
+    Väärtus = round(MaxValue, 1)  
+  ) %>%
+  select(Näitaja, Koht, Player, Väärtus)
+
+kable(individual_top3, caption = "Individuaalsed rekordid – Top 3")
+```
+
+Individuaalselt on kõige rohkem punkte ühes mängus visanud De’Aaron Fox (60), kõige rohkem lauapalle võtnud Baltimaade au ja uhkus Domantas Sabonis (28), kõige rohkem resultatiivseid sööte andnud Trae Young (22), kõige rohkem vaheltlõikeid teinud Dyson Daniels ning Kelly Oubre Jr. (8), kõige rohkem viskeblokeeringuid teinud Victor Wembanyama (10), kõige rohkem pallikaotustega patustanud Trae Young (11) ning kõige suurema tiimi kasulikkuse näitajaga hiilganud Giannis Antetokounmpo (54.2).
+
+
+
+```{r}
+get_top3_teams <- function(stat_column) {
+  team_totals %>%
+    filter(!is.na(.data[[stat_column]])) %>%
+    group_by(Tm) %>%
+    summarise(MaxValue = max(.data[[stat_column]], na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(MaxValue)) %>%
+    slice_head(n = 3)
+}
+
+team_top3 <- bind_rows(
+  get_top3_teams("Team_PTS")  %>% mutate(Näitaja = "Punktid"),
+  get_top3_teams("Team_REB")  %>% mutate(Näitaja = "Lauapallid"),
+  get_top3_teams("Team_AST")  %>% mutate(Näitaja = "Söödud"),
+  get_top3_teams("Team_STL")  %>% mutate(Näitaja = "Vaheltlõiked"),
+  get_top3_teams("Team_BLK")  %>% mutate(Näitaja = "Blokeeringud"),
+  get_top3_teams("Team_TOV")  %>% mutate(Näitaja = "Pallikaotused")
+) %>%
+  group_by(Näitaja) %>%
+  mutate(
+    Koht = row_number(),
+    Väärtus = round(MaxValue, 1)
+  ) %>%
+  select(Näitaja, Koht, Tm, Väärtus)
+
+kable(team_top3, caption = "Tiimide rekordid – Top 3")
+```
+
+Meeskondlikult on Memphis Grizzlies visanud ühes mängus 155 punkti, Oklahoma City Thunder võtnud 70 lauapalli, New York Knicks saanud 45 resultatiivset söötu, Atlanta Hawks sooritanud 22 vaheltlõiget, Phoenix Suns sooritanud 15 viskeblokeeringut ning Toronto Raptors patustanud 31 pallikaotusega.
+
+
+
+# Shiny rakendus
+
+
+Allolev kood genereerib Shiny rakenduse, millel on 4 vaadet.
+
+1. vaade kajastab andmestiku üldist ülevaadet ning toob esile mõned huvitavad faktid andmestiku kohta.
+
+2. vaade laseb kasutajal valida mängija ning jälgida erinevate näitajate muutumist ajas.
+
+3. vaade laseb kasutajal valida näitaja ning nii individuaalsel kui ka tiimi tasandil näha top 20 sooritajaid.
+
+4. vaade laseb kasutajal võrrelda erinevaid mängijaid ja tiime. Samuti saab vaadata, kuidas erinevad keskmiste punktide, lauapallide ja söötude arvud konkreetse vastase vastu hooaja keskmisest.
+
+
+```{r}
+library(shiny)
+library(dplyr)
+library(ggplot2)
+
+
+# UI
+ui <- fluidPage(
+  titlePanel("NBA 2024/25 Statistika"),
+  tabsetPanel(
+    tabPanel("Andmestiku ülevaade",
+             sidebarLayout(
+               sidebarPanel(
+                 h3("Üldine ülevaade"),
+                 p("Siit leiate andmestiku kohta mõned huvitavad faktid ja statistilised andmed.")
+               ),
+               mainPanel(
+                 uiOutput("stats_facts")
+               )
+             )
+          ),
+    
+  
+
+    tabPanel("Mängija statistika ajas",
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("player", "Vali mängija:",
+                  choices = sort(unique(nba_data$Player))),
+      selectInput("stat_category", "Vali näitaja:",
+                  choices = c("Punktid" = "PTS",
+                              "Söödud" = "AST",
+                               "Ründelauapallid" = "ORB",
+                              "Kaitselauapallid" = "DRB",
+                              "Lauapallid" = "TRB",
+                              "Vaheltlõiked" = "STL",
+                              "Blokeeringud" = "BLK",
+                              "Pallikaotused" = "TOV",
+                              "Mängijaskoor" = "GmSc",
+                              "Vigade arv" = "PF"
+                              ), selected = "PTS")
+    ),
+    mainPanel(
+      plotOutput("lineplot")
+    )
+  )
+),
+    
+    tabPanel("Top 20 liidrid",
+             sidebarLayout(
+               sidebarPanel(
+                 radioButtons("level", "Vali tase:",
+                              choices = c("Mängijad" = "player", "Tiimid" = "team"),
+                              selected = "player"),
+                 selectInput("category", "Vali kategooria:",
+                             choices = c("Punktid" = "PTS",
+                                         "Söödud" = "AST",
+                                         "Lauapallid" = "REB",
+                                         "Vaheltlõiked" = "STL",
+                                         "Blokeeringud" = "BLK",
+                                         "Visketabavus (osakaal)" = "FG_percent",
+                                         "Kolmeste tabavus (osakaal)" = "ThreeP_percent",
+                                         "Vabavisete tabavus (osakaal)" = "FT_percent",
+                                         "Tabatud visked" = "FG",
+                                         "Visketegemise katsed" = "FGA",
+                                         "Tabatud kolmesed" = "ThreeP",
+                                         "Kolmeste katsed" = "ThreePA",
+                                         "Tabatud vabavisked" = "FT",
+                                         "Vabavisete tegemise katsed" = "FTA",
+                                         "Ründelauapallid" = "ORB",
+                                         "Kaitselauapallid" = "DRB",
+                                         "Pallikaotused" = "TOV",
+                                         "Mängijaskoor" = "GmSc",
+                                         "Vigade arv" = "PF"),
+                             selected = "PTS")
+               ),
+               mainPanel(
+                 plotOutput("barplot", height = "700px")
+               )
+             )
+    ),
+    
+    
+    tabPanel("Head-to-Head võrdlus",
+             sidebarLayout(
+               sidebarPanel(
+                 radioButtons("h2h_level", "Võrdle:",
+                              choices = c("Mängijad" = "player", "Tiimid" = "team")),
+                 uiOutput("source_selector"),
+                 uiOutput("target_selector")
+               ),
+               mainPanel(
+                 plotOutput("h2h_plot")
+               )
+             )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  output$barplot <- renderPlot({
+    if (input$level == "player") {
+      data <- player_stats
+      name_col <- "Player"
+    } else {
+      data <- team_stats
+      name_col <- "Tm"
+    }
+
+    top20 <- data %>%
+      arrange(desc(.data[[input$category]])) %>%
+      slice_head(n = 20)
+
+    category_label <- switch(input$category,
+                             "PTS" = "Punktid",
+                             "AST" = "Söödud",
+                             "REB" = "Lauapallid",
+                             "STL" = "Vaheltlõiked",
+                             "BLK" = "Blokeeringud",
+                             "FG_percent" = "Visketabavus (osakaal)",
+                             "ThreeP_percent" = "Kolmeste tabavus (osakaal)",
+                             "FT_percent" = "Vabavisete tabavus (osakaal)",
+                             "FG" = "Tabatud visked",
+                             "FGA" = "Visketegemise katsed",
+                             "ThreeP" = "Tabatud kolmesed",
+                             "ThreePA" = "Kolmeste katsed",
+                             "FT" = "Tabatud vabavisked",
+                             "FTA" = "Vabavisete tegemise katsed",
+                             "ORB" = "Ründelauapallid",
+                             "DRB" = "Kaitselauapallid",
+                             "TOV" = "Pallikaotused",
+                             "GmSc" = "Mängijaskoor",
+                             "PF" = "Vigade arv")
+
+    ggplot(top20, aes(x = reorder(.data[[name_col]], .data[[input$category]]), 
+                      y = .data[[input$category]])) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      coord_flip() +
+      labs(
+        x = NULL,
+        y = category_label,
+        title = paste("Top 20", ifelse(input$level == "player", "mängijat", "tiimi"), 
+                      "kategoorias:", category_label)
+      ) +
+      geom_text(aes(label = round(.data[[input$category]], 2)), 
+                vjust = 0.5, hjust = 1, color = "white", size = 5)
+  })
+
+  
+  output$source_selector <- renderUI({
+    if (input$h2h_level == "player") {
+      selectInput("source", "Valitud mängija:", choices = sort(unique(nba_data$Player)))
+    } else {
+      selectInput("source", "Valitud tiim:", choices = sort(unique(nba_data$Tm)))
+    }
+  })
+
+  output$target_selector <- renderUI({
+    if (input$h2h_level == "player") {
+      selectInput("target", "Vastasmängija:", choices = sort(unique(nba_data$Player)))
+    } else {
+      selectInput("target", "Vastastiim:", choices = sort(unique(nba_data$Tm)))
+    }
+  })
+
+  
+  output$h2h_plot <- renderPlot({
+  req(input$source, input$target)
+
+ 
+  if (input$source == input$target) {
+    return(ggplot() + 
+             labs(title = "Ei saa võrrelda sama mängijaga või tiimiga",
+                  subtitle = "Palun vali erinevad tiimid või mängijad") + 
+             theme_minimal() +
+             theme(plot.title = element_text(color = "darkred", size = 16, face = "bold"),
+                   plot.subtitle = element_text(color = "darkred", size = 14)))
+  }
+
+  if (input$h2h_level == "team") {
+    source_vs_target <- nba_data %>%
+      filter(Tm == input$source & Opp == input$target)
+
+    source_all <- nba_data %>%
+      filter(Tm == input$source)
+
+    target_vs_source <- nba_data %>%
+      filter(Tm == input$target & Opp == input$source)
+
+    target_all <- nba_data %>%
+      filter(Tm == input$target)
+
+    if (nrow(source_vs_target) == 0 && nrow(target_vs_source) == 0) {
+      return(ggplot() + 
+               labs(title = paste(input$source, "pole mänginud", input$target, "vastu"),
+                    subtitle = "Ei leitud ühiseid mänge") + 
+               theme_minimal() +
+               theme(plot.title = element_text(color = "darkred", size = 16, face = "bold"),
+                     plot.subtitle = element_text(color = "darkred", size = 14)))
+    }
+
+    df <- data.frame(
+      Tiim = rep(c(input$source, input$target), each = 2),
+      Võrdlus = rep(c("Omavaheliste mängude keskmine", "Hooaja keskmine"), times = 2),
+      Punktid = c(mean(source_vs_target$Team_PTS), mean(source_all$Team_PTS),
+                  mean(target_vs_source$Team_PTS), mean(target_all$Team_PTS)),
+      Lauad = c(mean(source_vs_target$Team_REB), mean(source_all$Team_REB),
+                mean(target_vs_source$Team_REB), mean(target_all$Team_REB)),
+      Söödud = c(mean(source_vs_target$Team_AST), mean(source_all$Team_AST),
+                 mean(target_vs_source$Team_AST), mean(target_all$Team_AST))
+    ) %>%
+      tidyr::pivot_longer(cols = c("Punktid", "Lauad", "Söödud"),
+                          names_to = "Statistika", values_to = "Väärtus")
+
+    ggplot(df, aes(x = Tiim, y = Väärtus, fill = Võrdlus)) +
+      geom_col(position = position_dodge(width = 0.9), width = 0.8) +  
+      facet_wrap(~ Statistika, scales = "free_y", ncol = 1) +  
+      geom_text(aes(label = round(Väärtus, 1)), 
+                position = position_dodge(width = 0.9), 
+                vjust = 0.5, color = "black", size = 5) +  
+      labs(title = paste("Võrdlus:", input$source, "vs", input$target),
+           x = NULL, y = NULL) +
+      theme_bw() +
+      theme(legend.title = element_blank(),
+            plot.title = element_text(size = 16, face = "bold"),
+            plot.subtitle = element_text(size = 14),
+            strip.text = element_text(size = 12),
+            strip.background = element_blank(),
+            panel.grid = element_blank()) +
+      scale_fill_manual(values = c("#1f77b4", "#ff7f0e"))  
+  } else {
+    subset <- nba_data %>%
+      filter(Player == input$source | Player == input$target)
+
+    common_match_ids <- subset %>%
+      group_by(MatchID) %>%
+      filter(n_distinct(Player) == 2) %>%
+      pull(MatchID) %>%
+      unique()
+
+    common_games <- subset %>% filter(MatchID %in% common_match_ids)
+
+    if (nrow(common_games) == 0) {
+      return(ggplot() + 
+               labs(title = paste(input$source, "pole mänginud", input$target, "vastu"),
+                    subtitle = "Ei leitud ühiseid mänge") + 
+               theme_bw() +
+               theme(plot.title = element_text(color = "darkred", size = 16, face = "bold"),
+                     plot.subtitle = element_text(color = "darkred", size = 14)))
+    }
+
+    player1_stats_h2h <- common_games %>%
+      filter(Player == input$source) %>%
+      summarise(Punktid = mean(PTS), Lauad = mean(TRB), Söödud = mean(AST))
+
+    player2_stats_h2h <- common_games %>%
+      filter(Player == input$target) %>%
+      summarise(Punktid = mean(PTS), Lauad = mean(TRB), Söödud = mean(AST))
+
+    player1_all <- nba_data %>%
+      filter(Player == input$source) %>%
+      summarise(Punktid = mean(PTS), Lauad = mean(TRB), Söödud = mean(AST))
+
+    player2_all <- nba_data %>%
+      filter(Player == input$target) %>%
+      summarise(Punktid = mean(PTS), Lauad = mean(TRB), Söödud = mean(AST))
+
+    df <- data.frame(
+      Mängija = rep(c(input$source, input$source, input$target, input$target), each = 3),
+      Võrdlus = rep(c("Omavaheliste mängude keskmine", "Hooaja keskmine"), times = 2, each = 3),
+      Statistika = rep(c("Punktid", "Lauad", "Söödud"), times = 4),
+      Väärtus = c(
+        as.numeric(player1_stats_h2h),
+        as.numeric(player1_all),
+        as.numeric(player2_stats_h2h),
+        as.numeric(player2_all)
+      )
+    )
+
+    ggplot(df, aes(x = Mängija, y = Väärtus, fill = Võrdlus)) +
+      geom_col(position = position_dodge(width = 0.9), width = 0.8) +  
+      facet_wrap(~ Statistika, scales = "free_y", ncol = 1) +  
+      geom_text(aes(label = round(Väärtus, 1)), 
+                position = position_dodge(width = 0.9), 
+                vjust = 0.5, color = "black", size = 5) + 
+      labs(title = "Mängijate võrdlus: hooaja keskmine vs omavahel",
+           y = NULL, x = NULL) +
+      theme_bw() +
+      theme(legend.title = element_blank(),
+            plot.title = element_text(size = 16, face = "bold"),
+            plot.subtitle = element_text(size = 14),
+            strip.text = element_text(size = 12),
+            strip.background = element_blank(),
+            panel.grid = element_blank()) +
+      scale_fill_manual(values = c("#1f77b4", "#ff7f0e"))  
+  }
+})
+  
+
+output$lineplot <- renderPlot({
+  req(input$player, input$stat_category)
+
+  
+  player_data <- nba_data %>%
+    filter(Player == input$player) %>%
+    select(Data, Player, input$stat_category) %>%
+    arrange(Data)
+
+  
+  ggplot(player_data, aes(x = Data, y = .data[[input$stat_category]])) +
+    geom_line(color = "steelblue", size = 1) +
+    geom_point(color = "red", size = 2) +
+    labs(title = paste(input$player, "statistika ajas:", input$stat_category),
+         x = "Kuupäev", y = input$stat_category) +
+    theme_bw() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          plot.subtitle = element_text(size = 14),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+})
+  
+ output$stats_facts <- renderUI({
+  
+  total_games <- max(nba_data$MatchID, na.rm = TRUE)
+  total_players <- n_distinct(nba_data$Player)
+  total_teams <- n_distinct(nba_data$Tm)
+
+  
+  max_points <- max(nba_data$PTS, na.rm = TRUE)
+  player_max_points <- nba_data$Player[which.max(nba_data$PTS)]
+
+  max_rebounds <- max(nba_data$TRB, na.rm = TRUE)
+  player_max_rebounds <- nba_data$Player[which.max(nba_data$TRB)]
+
+  max_assists <- max(nba_data$AST, na.rm = TRUE)
+  player_max_assists <- nba_data$Player[which.max(nba_data$AST)]
+
+  max_steals <- max(nba_data$STL, na.rm = TRUE)
+  player_max_steals <- nba_data$Player[which.max(nba_data$STL)]
+
+  max_blocks <- max(nba_data$BLK, na.rm = TRUE)
+  player_max_blocks <- nba_data$Player[which.max(nba_data$BLK)]
+
+  max_turnovers <- max(nba_data$TOV, na.rm = TRUE)
+  player_max_turnovers <- nba_data$Player[which.max(nba_data$TOV)]
+
+  max_gmsc <- max(nba_data$GmSc, na.rm = TRUE)
+  player_max_gmsc <- nba_data$Player[which.max(nba_data$GmSc)]
+
+  
+  team_game_stats <- nba_data %>%
+    group_by(MatchID, Tm) %>%
+    summarise(
+      Points = sum(PTS, na.rm = TRUE),
+      Rebounds = sum(TRB, na.rm = TRUE),
+      Assists = sum(AST, na.rm = TRUE),
+      Steals = sum(STL, na.rm = TRUE),
+      Blocks = sum(BLK, na.rm = TRUE),
+      Turnovers = sum(TOV, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  
+  max_team_points <- max(team_game_stats$Points, na.rm = TRUE)
+  team_max_points <- team_game_stats$Tm[which.max(team_game_stats$Points)]
+
+  max_team_rebounds <- max(team_game_stats$Rebounds, na.rm = TRUE)
+  team_max_rebounds <- team_game_stats$Tm[which.max(team_game_stats$Rebounds)]
+
+  max_team_assists <- max(team_game_stats$Assists, na.rm = TRUE)
+  team_max_assists <- team_game_stats$Tm[which.max(team_game_stats$Assists)]
+
+  max_team_steals <- max(team_game_stats$Steals, na.rm = TRUE)
+  team_max_steals <- team_game_stats$Tm[which.max(team_game_stats$Steals)]
+
+  max_team_blocks <- max(team_game_stats$Blocks, na.rm = TRUE)
+  team_max_blocks <- team_game_stats$Tm[which.max(team_game_stats$Blocks)]
+
+  max_team_turnovers <- max(team_game_stats$Turnovers, na.rm = TRUE)
+  team_max_turnovers <- team_game_stats$Tm[which.max(team_game_stats$Turnovers)]
+
+ 
+  tagList(
+    h3(style = "font-family: 'Roboto', sans-serif; color: #0047ab;",
+       paste0("Kogu mängude arv: ", total_games)),
+    h3(style = "font-family: 'Roboto', sans-serif; color: #0047ab;",
+       paste0("Kogu mängijate arv: ", total_players)),
+    h3(style = "font-family: 'Roboto', sans-serif; color: #0047ab;",
+       paste0("Kogu tiimide arv: ", total_teams)),
+
+    h3(style = "margin-top: 30px; font-family: 'Roboto', sans-serif; color: #333333;",
+       "Individuaalsed rekordid"),
+
+    h4(style = "font-family: 'Roboto', sans-serif; color: #e60000;",
+       paste0("Maksimaalne visatud punktide arv ühes mängus: ", max_points, " (", trimws(player_max_points), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #e60000;",
+       paste0("Maksimaalne lauapallide arv ühes mängus: ", max_rebounds, " (", trimws(player_max_rebounds), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #e60000;",
+       paste0("Maksimaalne söötude arv ühes mängus: ", max_assists, " (", trimws(player_max_assists), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #ff8c00;",
+       paste0("Maksimaalne vaheltlõigete arv ühes mängus: ", max_steals, " (", trimws(player_max_steals), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #ff8c00;",
+       paste0("Maksimaalne viskeblokeeringute arv ühes mängus: ", max_blocks, " (", trimws(player_max_blocks), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #ff8c00;",
+       paste0("Maksimaalne pallikaotuste arv ühes mängus: ", max_turnovers, " (", trimws(player_max_turnovers), ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #ff8c00;",
+       paste0("Maksimaalne mängijaskoor (GmSc) ühes mängus: ", max_gmsc, " (", trimws(player_max_gmsc), ")")),
+
+    h3(style = "margin-top: 30px; font-family: 'Roboto', sans-serif; color: #333333;",
+       "Tiimi rekordid"),
+
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim punktisumma tiimi poolt ühes mängus: ", max_team_points, " (", team_max_points, ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim lauapallide arv tiimi poolt ühes mängus: ", max_team_rebounds, " (", team_max_rebounds, ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim sööduarv tiimi poolt ühes mängus: ", max_team_assists, " (", team_max_assists, ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim vaheltlõigete arv tiimi poolt ühes mängus: ", max_team_steals, " (", team_max_steals, ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim viskeblokeeringute arv tiimi poolt ühes mängus: ", max_team_blocks, " (", team_max_blocks, ")")),
+    h4(style = "font-family: 'Roboto', sans-serif; color: #007b00;",
+       paste0("Kõrgeim pallikaotuste arv tiimi poolt ühes mängus: ", max_team_turnovers, " (", team_max_turnovers, ")"))
+  )
+})
+  
+  
+  
+  
+  
+  
+}
+
+shinyApp(ui = ui, server = server)
+```
